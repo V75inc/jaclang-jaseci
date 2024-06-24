@@ -28,6 +28,13 @@ class User(BaseUser):
         """Send verification code."""
         SendGridEmailer.send_verification_code(code, email)
 
+    @staticmethod
+    def sso_mapper(open_id) -> dict[str, object]:
+        """Send verification code."""
+        return {
+            "name": f"{open_id.first_name} {open_id.last_name}"
+        }
+
 ::py::
 
 node boy {
@@ -306,6 +313,6 @@ with entry:__main__ {
     # SendGridEmailer.start();
     start(
         host="0.0.0.0",
-        port=8001
+        port=8000
     );
 }
