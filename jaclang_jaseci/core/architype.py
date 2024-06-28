@@ -1,23 +1,26 @@
 """Core constructs for Jac Language."""
 
-import unittest
-from dataclasses import dataclass, field
-from os import getenv
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
 from pickle import dumps
 from re import IGNORECASE, compile
-from types import UnionType
 from typing import (
-    Any,
     Callable,
-    Generic,
     Optional,
     Union,
     cast,
 )
-from uuid import UUID, uuid4
 
-from jaclang.compiler.constant import EdgeDir, T
-from jaclang.core.architype import Access, Architype, ObjectAnchor, ObjectType
+from bson import ObjectId
+
+from jaclang.compiler.constant import EdgeDir
+from jaclang.core.architype import (
+    AnchorAccess,
+    Architype as _Architype,
+    ObjectAnchor as _ObjectAnchor,
+    ObjectType,
+)
 from jaclang.core.utils import collect_node_connections
 
 
@@ -25,38 +28,16 @@ GENERIC_ID_REGEX = compile(r"^(g|n|e|w):([^:]*):([a-f\d]{24})$", IGNORECASE)
 NODE_ID_REGEX = compile(r"^n:([^:]*):([a-f\d]{24})$", IGNORECASE)
 EDGE_ID_REGEX = compile(r"^e:([^:]*):([a-f\d]{24})$", IGNORECASE)
 WALKER_ID_REGEX = compile(r"^w:([^:]*):([a-f\d]{24})$", IGNORECASE)
-ENABLE_MANUAL_SAVE = getenv("ENABLE_MANUAL_SAVE") == "true"
-
-
-@dataclass
-class AnchorAccess(Generic[T]):
-    """Anchor Access Handler."""
-
-    all: int = 0
-    roots: Access[T] = field(default_factory=Access[T])
-    types: dict[type[Architype], Access[T]] = field(default_factory=dict)
-    nodes: Access[T] = field(default_factory=Access[T])
 
 
 @dataclass(eq=False)
-class ObjectAnchor:
+class ObjectAnchor(_ObjectAnchor):
     """Object Anchor."""
 
-    type: ObjectType = ObjectType.generic
-    name: str = ""
-    id: UUID = field(default_factory=uuid4)
-    root: Optional[UUID] = None
-    access: AnchorAccess[UUID] = field(default_factory=AnchorAccess[UUID])
+    id: ObjectId = field(default_factory=ObjectId)
+    root: Optional[ObjectId] = None
+    access: AnchorAccess[ObjectId] = field(default_factory=AnchorAccess[ObjectId])
     architype: Optional[Architype] = None
-    connected: bool = False
-    current_access_level: Optional[int] = None
-    persistent: bool = field(default=not ENABLE_MANUAL_SAVE)
-    hash: int = 0
-
-    @property
-    def ref_id(self) -> str:
-        """Return id in reference type."""
-        return f"{self.type.value}:{self.name}:{self.id}"
 
     @classmethod
     def ref(cls, ref_id: str) -> Optional[ObjectAnchor]:
@@ -65,24 +46,16 @@ class ObjectAnchor:
             return cls(
                 type=ObjectType(match.group(1)),
                 name=match.group(2),
-                id=UUID(match.group(3)),
+                id=ObjectId(match.group(3)),
             )
         return None
-
-    def save(self) -> None:
-        """Save Anchor."""
-        raise Exception(f"Invalid Reference {self.ref_id}")
-
-    def destroy(self) -> None:
-        """Save Anchor."""
-        raise Exception(f"Invalid Reference {self.ref_id}")
 
     def sync(self, node: Optional["NodeAnchor"] = None) -> Optional[Architype]:
         """Retrieve the Architype from db and return."""
         if architype := self.architype:
             return architype
 
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         jsrc = ExecutionContext.get().datasource
         anchor = jsrc.find_one(self.id)
@@ -92,13 +65,9 @@ class ObjectAnchor:
 
         return self.architype
 
-    def unsync(self) -> ObjectAnchor:
-        """Generate unlinked anchor."""
-        return ObjectAnchor(self.type, self.name, self.id)
-
     def allocate(self) -> None:
         """Allocate hashes and memory."""
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         jctx = ExecutionContext.get()
         self.root = jctx.root.id
@@ -106,7 +75,7 @@ class ObjectAnchor:
 
     def is_allowed(self, to: Union[ObjectAnchor, Architype]) -> bool:
         """Access validation."""
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         jctx = ExecutionContext.get()
         jroot = jctx.root
@@ -156,36 +125,13 @@ class ObjectAnchor:
 
         return to.current_access_level is not None
 
-    def __getstate__(self) -> dict[str, object]:
-        """Override getstate for pickle and shelve."""
-        state = self.__dict__.copy()
-        state["hash"] = 0
-        state["current_access_level"] = None
-        return state
-
-    def __setstate__(self, state: dict) -> None:
-        """Override setstate for pickle and shelve."""
-        self.__dict__.update(state)
-        self.hash = hash(dumps(self))
-
-    def __hash__(self) -> int:
-        """Override hash for anchor."""
-        return hash(self.ref_id)
-
-    def __eq__(self, other: object) -> bool:
-        """Override equal implementation."""
-        if isinstance(other, ObjectAnchor):
-            return (
-                self.type == other.type
-                and self.name == other.name
-                and self.id == other.id
-                and self.connected == other.connected
-                and self.architype == self.architype
-            )
-        elif isinstance(other, Architype):
-            return self == other._jac_
-
-        return False
+    def serialize(self) -> dict[str, object]:
+        data = asdict(self)
+        data.pop("connected", None)
+        data.pop("current_access_level", None)
+        data.pop("persistent", None)
+        data.pop("hash", None)
+        return data
 
 
 @dataclass(eq=False)
@@ -202,12 +148,12 @@ class NodeAnchor(ObjectAnchor):
         if match := NODE_ID_REGEX.search(ref_id):
             return cls(
                 name=match.group(1),
-                id=UUID(match.group(2)),
+                id=ObjectId(match.group(2)),
             )
         return None
 
     def _save(self) -> None:
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         jsrc = ExecutionContext.get().datasource
 
@@ -232,7 +178,7 @@ class NodeAnchor(ObjectAnchor):
     def destroy(self) -> None:
         """Delete Anchor."""
         if self.architype and self.current_access_level == 1:
-            from .context import ExecutionContext
+            from jaclang.core.context import ExecutionContext
 
             jsrc = ExecutionContext.get().datasource
             for edge in self.edges:
@@ -374,12 +320,12 @@ class EdgeAnchor(ObjectAnchor):
         if match := EDGE_ID_REGEX.search(ref_id):
             return cls(
                 name=match.group(1),
-                id=UUID(match.group(2)),
+                id=ObjectId(match.group(2)),
             )
         return None
 
     def _save(self) -> None:
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         jsrc = ExecutionContext.get().datasource
 
@@ -407,7 +353,7 @@ class EdgeAnchor(ObjectAnchor):
     def destroy(self) -> None:
         """Delete Anchor."""
         if self.architype and self.current_access_level == 1:
-            from .context import ExecutionContext
+            from jaclang.core.context import ExecutionContext
 
             jsrc = ExecutionContext.get().datasource
 
@@ -486,12 +432,12 @@ class WalkerAnchor(ObjectAnchor):
         if ref_id and (match := WALKER_ID_REGEX.search(ref_id)):
             return cls(
                 name=match.group(1),
-                id=UUID(match.group(2)),
+                id=ObjectId(match.group(2)),
             )
         return None
 
     def _save(self) -> None:
-        from .context import ExecutionContext
+        from jaclang.core.context import ExecutionContext
 
         ExecutionContext.get().datasource.set(self)
 
@@ -509,7 +455,7 @@ class WalkerAnchor(ObjectAnchor):
     def destroy(self) -> None:
         """Delete Anchor."""
         if self.architype and self.current_access_level == 1:
-            from .context import ExecutionContext
+            from jaclang.core.context import ExecutionContext
 
             ExecutionContext.get().datasource.remove(self)
 
@@ -625,11 +571,8 @@ class WalkerAnchor(ObjectAnchor):
         raise Exception(f"Invalid Reference {self.ref_id}")
 
 
-class Architype:
+class Architype(_Architype):
     """Architype Protocol."""
-
-    _jac_entry_funcs_: list[DSFunc]
-    _jac_exit_funcs_: list[DSFunc]
 
     def __init__(self) -> None:
         """Create default architype."""
@@ -733,100 +676,3 @@ class Root(NodeArchitype):
         self.reachable_nodes = []
         self.connections = set()
         self._jac_.edges = []
-
-
-@dataclass(eq=False)
-class DSFunc:
-    """Data Spatial Function."""
-
-    name: str
-    trigger: type | UnionType | tuple[type | UnionType, ...] | None
-    func: Callable[[Any, Any], Any] | None = None
-
-    def resolve(self, cls: type) -> None:
-        """Resolve the function."""
-        self.func = getattr(cls, self.name)
-
-
-class JacTestResult(unittest.TextTestResult):
-    """Jac test result class."""
-
-    def __init__(
-        self,
-        stream,  # noqa
-        descriptions,  # noqa
-        verbosity: int,
-        max_failures: Optional[int] = None,
-    ) -> None:
-        """Initialize FailFastTestResult object."""
-        super().__init__(stream, descriptions, verbosity)  # noqa
-        self.failures_count = JacTestCheck.failcount
-        self.max_failures = max_failures
-
-    def addFailure(self, test, err) -> None:  # noqa
-        """Count failures and stop."""
-        super().addFailure(test, err)
-        self.failures_count += 1
-        if self.max_failures is not None and self.failures_count >= self.max_failures:
-            self.stop()
-
-    def stop(self) -> None:
-        """Stop the test execution."""
-        self.shouldStop = True
-
-
-class JacTextTestRunner(unittest.TextTestRunner):
-    """Jac test runner class."""
-
-    def __init__(self, max_failures: Optional[int] = None, **kwargs) -> None:  # noqa
-        """Initialize JacTextTestRunner object."""
-        self.max_failures = max_failures
-        super().__init__(**kwargs)
-
-    def _makeResult(self) -> JacTestResult:  # noqa
-        """Override the method to return an instance of JacTestResult."""
-        return JacTestResult(
-            self.stream,
-            self.descriptions,
-            self.verbosity,
-            max_failures=self.max_failures,
-        )
-
-
-class JacTestCheck:
-    """Jac Testing and Checking."""
-
-    test_case = unittest.TestCase()
-    test_suite = unittest.TestSuite()
-    breaker = False
-    failcount = 0
-
-    @staticmethod
-    def reset() -> None:
-        """Clear the test suite."""
-        JacTestCheck.test_case = unittest.TestCase()
-        JacTestCheck.test_suite = unittest.TestSuite()
-
-    @staticmethod
-    def run_test(xit: bool, maxfail: int | None, verbose: bool) -> None:
-        """Run the test suite."""
-        verb = 2 if verbose else 1
-        runner = JacTextTestRunner(max_failures=maxfail, failfast=xit, verbosity=verb)
-        result = runner.run(JacTestCheck.test_suite)
-        if result.wasSuccessful():
-            print("Passed successfully.")
-        else:
-            fails = len(result.failures)
-            JacTestCheck.failcount += fails
-            JacTestCheck.breaker = (
-                (JacTestCheck.failcount >= maxfail) if maxfail else True
-            )
-
-    @staticmethod
-    def add_test(test_fun: Callable) -> None:
-        """Create a new test."""
-        JacTestCheck.test_suite.addTest(unittest.FunctionTestCase(test_fun))
-
-    def __getattr__(self, name: str) -> object:
-        """Make convenient check.Equal(...) etc."""
-        return getattr(JacTestCheck.test_case, name)
