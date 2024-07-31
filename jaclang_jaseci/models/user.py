@@ -81,13 +81,18 @@ class User(UserCommon):
         user_model["password"] = (str, ...)
         user_model.pop("id", None)
         user_model.pop("root_id", None)
-        user_model.pop("is_activated", None)
+        # user_model.pop("is_activated", None)
         user_model.pop("sso", None)
 
         return create_model("UserRegister", __base__=UserCommon, **user_model)
 
     @staticmethod
     def send_verification_code(code: str, email: str) -> None:
+        """Send verification code."""
+        pass
+
+    @staticmethod
+    def send_reset_code(code: str, email: str) -> None:
         """Send verification code."""
         pass
 

@@ -124,7 +124,7 @@ class DocAccess:
     @staticmethod
     def from_json(access: dict[str, Any]) -> "DocAccess":
         """Convert dict to DocAccess."""
-        all = bool(access.get("all"))
+        all = cast(int, access.get("all"))
         nodes = cast(list[list[ObjectId]], access.get("nodes") or [[], []])
         roots = cast(list[list[ObjectId]], access.get("roots") or [[], []])
 
@@ -524,7 +524,14 @@ class DocArchitype(Generic[DA]):
         ):
             return False
 
-        if (isinstance(self, Root) and from_jd.id == to_root) or from_root == to_root:
+        jroot = jctx.root
+
+        if (
+            (isinstance(self, Root) and from_jd.id == to_root)
+            or from_root == to_root
+            or jroot._jac_doc_.id == to_root
+            or jroot == to
+        ):
             to_jd.current_access_level = 1
             return True
 
@@ -931,6 +938,28 @@ class EdgeArchitype(_EdgeArchitype, DocArchitype["EdgeArchitype"]):
                 await self.save_with_session()
 
         return self._jac_doc_
+
+    def allow_root(self, root: Union[DocAnchor, "Root"], write: bool = False) -> None:
+        """Allow all access from target root graph to current Architype."""
+        if isinstance(root, DocAnchor):
+            self._jac_doc_.allow_root(root.id, write)
+        elif isinstance(root, Root):
+            self._jac_doc_.allow_root(root._jac_doc_.id, write)
+
+    def disallow_root(self, root: Union[DocAnchor, "Root"]) -> None:
+        """Disallow all access from target root graph to current Architype."""
+        if isinstance(root, DocAnchor):
+            self._jac_doc_.disallow_root(root.id)
+        elif isinstance(root, Root):
+            self._jac_doc_.disallow_root(root._jac_doc_.id)
+
+    def unrestrict(self, write: bool = False) -> None:
+        """Allow everyone to access current Architype."""
+        self._jac_doc_.unrestrict(write)
+
+    def restrict(self) -> None:
+        """Disallow others to access current Architype."""
+        self._jac_doc_.restrict()
 
 
 @dataclass(eq=False)
